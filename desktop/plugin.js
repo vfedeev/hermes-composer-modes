@@ -1,5 +1,14 @@
 /**
- * composer-modes — Cursor-style mode selector for the Hermes composer. v13.1.
+ * composer-modes — Cursor-style mode selector for the Hermes composer. v14.0.
+ *
+ * v14 (fork): localization without hardcodes — every user-facing string lives in the
+ *   `STR` catalogue (en/ru/es bundles) resolved against the APP's display language
+ *   via the SDK's plugin-i18n (`ctx.i18n.register` + `usePluginI18n`/`useI18n`, taken
+ *   off the SDK namespace to degrade on pre-0.21.4 shells). The app locale also travels
+ *   to the backend (`POST /locale` + `locale` on `/mode` stages), where `i18n.py`'s
+ *   ladder (app locale → HERMES_COMPOSER_MODES_LANG → OS locale → en) localizes the
+ *   model-facing sentences — notably the ask closing line, previously hardcoded
+ *   Spanish. Protocol tokens stay English; see docs/localization.md.
  *
  * Botón único de modos en la tira del composer (ask/agent/plan/debug). Un ComposerMiddleware
  * adjunta el FRAME del modo al draft (v12.0: `mode` + `note` como DATO, sin RPC): el shell manda
@@ -134,12 +143,260 @@ import {
   TRANSCRIPT_DIRECTIVE_AREA,
   useValue
 } from '@hermes/plugin-sdk'
+import * as SDK from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
+// v14: the i18n exports landed after 0.21.3 — take them from the namespace so
+// an older shell degrades to the English bundle instead of failing the import
+// (a missing named import would break the whole plugin load).
+const usePluginI18n = SDK.usePluginI18n ?? (() => translateEn)
+const useI18n = SDK.useI18n ?? (() => ({ locale: translateEn.locale() }))
+
 const ID = 'composer-modes'
-const VER = 'v13.1'
+const VER = 'v14.0'
 const BOOT = Date.now().toString(36).slice(-4)
+
+/** v14: user-facing copy is localized (no hardcoded Spanish). The active
+ *  locale is the app's display language — components read it via
+ *  `usePluginI18n(ID)`, handlers via ctx.i18n.t (`T`). Resolution falls
+ *  through the bundles to `en`, so an unknown app locale answers in English.
+ *  The same locale travels to the backend with every mode stage
+ *  (`appLocale`), which localizes the model-facing closing sentence there. */
+const appLocale = atom(
+  (typeof navigator !== 'undefined' && navigator.language) || ''
+)
+
+// UI copy catalogue — the ONLY place these strings live.
+const STR = {
+  en: {
+    noSession: 'No active session to send.',
+    sendFailed: 'Could not send. Try again from the prompt box.',
+    answersTooLong: 'The answers are too long to send.',
+    pathCopied: 'Plan path copied.',
+    toastPlanQ: 'The agent has questions — answer them in the card. Mode returned to Agent.',
+    toastPlanReady: 'Plan ready — mode returned to Agent. Implement it, modify it, or type in the prompt.',
+    toastDebugReady: 'Debug card ready — continue with its buttons. Mode returned to Agent.',
+    planReadyTitle: 'Plan ready — what next?',
+    planDetailHint: 'Full detail lives in the plan file.',
+    implement: 'Implement now',
+    modify: 'Modify',
+    copyPath: 'Copy path',
+    readPlan: 'Read plan',
+    closePlan: 'Close plan',
+    sending: 'Sending…',
+    planAltHint: 'Or type in the prompt box to adjust the plan.',
+    modifyTitle: 'Modify the plan',
+    modifyDesc: 'Describe what to change. It is sent as a new turn that references the plan.',
+    modifyPlaceholder: 'Describe what to change in the plan…',
+    cancel: 'Cancel',
+    sendChanges: 'Send changes',
+    implementMsg: (f) => `Implement the plan at ${f} now. Follow it step by step.`,
+    updateMsg: (f, d) => `Update the plan at ${f} with these changes: ${d}`,
+    readerNoWorkspace: 'No workspace (empty cwd): cannot resolve the path.',
+    readerNoRead: 'readFileText is not available in this shell.',
+    readerBinary: 'The file is binary: it cannot be shown.',
+    readerEmpty: 'No plan selected.',
+    readerLoading: 'Reading the plan…',
+    readerError: 'Could not read the plan.',
+    readerTruncated: 'Large file: view truncated to 512 KiB.',
+    planQTitle: 'Plan questions',
+    planQTitleCount: (i, n) => `Plan questions — ${i}/${n}`,
+    qNoAnswer: '(no answer)',
+    answersHeader: (f) => `Answers to the plan questions (${f}):`,
+    continueNoQuestions: (f) => `I could not read or answer your questions (${f}).`,
+    qReadErr: 'Could not read the questions.',
+    qBinary: 'The questions file is binary.',
+    qParseErr: 'No valid questions found in the file.',
+    qInvalid: 'Invalid directive.',
+    qReading: 'Reading the questions…',
+    qContinue: 'Continue without answering',
+    qOther: 'Another answer…',
+    qWrite: 'Write your answer…',
+    qBack: 'Back',
+    qNext: 'Next',
+    qSend: 'Send answers',
+    qAdjust: 'To tweak anything, type in the prompt box.',
+    qAnswerHint: 'Answer each question (option or free text), then send them all together.',
+    debugTitle: (r) => `Debug mode — round ${r}`,
+    debugHint: 'Follow the numbered steps in the message above, then use a button.',
+    debugRetry: "I already did the steps, it's still not working",
+    debugFixed: 'Mark as fixed',
+    stillBrokenMsg: (r) =>
+      `I already did the steps and the bug is STILL NOT WORKING. Read the debug logs/instrumentation output, find the root cause with evidence, apply the fix, and reply with the next sequential steps for me to test. If there are no logs or no new evidence, do not guess: say what is missing, extend or fix the logging if it failed silently, and ask me to re-run the steps to capture it. End with a new ::debug-loop{round="${r}"} directive.`,
+    fixedMsg:
+      'The bug is FIXED. Remove ALL the debug instrumentation you added in ANY round (logs, scripts, config flags). Do not rely on memory: search the project for the log strings/markers you introduced and clean every file you touched. Restore the code to its pre-debug state, list each file cleaned, and flag anything you could not fully restore.',
+    modeAria: (label) => `Mode ${label} — click or Shift+Tab to change`,
+    modeTipSuffix: ' · click or Shift+Tab: Ask → Agent → Plan → Debug · ',
+    modeHintAsk: 'Answer only — never edit files or run mutations',
+    modeHintAgent: 'Full agentic mode (default)',
+    modeHintPlan: 'Write a plan only — no execution (/plan)',
+    modeHintDebug: 'Systematic debugging: evidence first, then fix'
+  },
+  ru: {
+    noSession: 'Нет активной сессии для отправки.',
+    sendFailed: 'Не удалось отправить. Попробуйте из поля ввода.',
+    answersTooLong: 'Ответы слишком длинные для отправки.',
+    pathCopied: 'Путь к плану скопирован.',
+    toastPlanQ: 'У агента вопросы — ответьте в карточке. Режим возвращён к Agent.',
+    toastPlanReady: 'План готов — режим возвращён к Agent. Реализуйте, измените или напишите в поле ввода.',
+    toastDebugReady: 'Карточка debug готова — продолжайте её кнопками. Режим возвращён к Agent.',
+    planReadyTitle: 'План готов — что дальше?',
+    planDetailHint: 'Полный план — в файле.',
+    implement: 'Реализовать',
+    modify: 'Изменить',
+    copyPath: 'Копировать путь',
+    readPlan: 'Открыть план',
+    closePlan: 'Закрыть план',
+    sending: 'Отправка…',
+    planAltHint: 'Или напишите в поле ввода, чтобы поправить план.',
+    modifyTitle: 'Изменить план',
+    modifyDesc: 'Опишите, что изменить. Отправится новым запросом со ссылкой на план.',
+    modifyPlaceholder: 'Опишите, что изменить в плане…',
+    cancel: 'Отмена',
+    sendChanges: 'Отправить изменения',
+    implementMsg: (f) => `Реализуй план из файла ${f}. Следуй ему шаг за шагом.`,
+    updateMsg: (f, d) => `Обнови план в файле ${f} с этими изменениями: ${d}`,
+    readerNoWorkspace: 'Нет workspace (пустой cwd): не удаётся определить путь.',
+    readerNoRead: 'readFileText недоступен в этой оболочке.',
+    readerBinary: 'Файл бинарный: показать нельзя.',
+    readerEmpty: 'План не выбран.',
+    readerLoading: 'Читаю план…',
+    readerError: 'Не удалось прочитать план.',
+    readerTruncated: 'Большой файл: просмотр ограничен 512 КиБ.',
+    planQTitle: 'Вопросы по плану',
+    planQTitleCount: (i, n) => `Вопросы по плану — ${i}/${n}`,
+    qNoAnswer: '(нет ответа)',
+    answersHeader: (f) => `Ответы на вопросы плана (${f}):`,
+    continueNoQuestions: (f) => `Не удалось прочитать или ответить на вопросы (${f}).`,
+    qReadErr: 'Не удалось прочитать вопросы.',
+    qBinary: 'Файл вопросов бинарный.',
+    qParseErr: 'В файле не найдено корректных вопросов.',
+    qInvalid: 'Неверная директива.',
+    qReading: 'Читаю вопросы…',
+    qContinue: 'Продолжить без ответов',
+    qOther: 'Другой ответ…',
+    qWrite: 'Напишите ваш ответ…',
+    qBack: 'Назад',
+    qNext: 'Далее',
+    qSend: 'Отправить ответы',
+    qAdjust: 'Что-то поправить — напишите в поле ввода.',
+    qAnswerHint: 'Ответьте на каждый вопрос (вариант или текст) и отправьте всё вместе.',
+    debugTitle: (r) => `Режим Debug — раунд ${r}`,
+    debugHint: 'Выполните шаги из сообщения выше, затем нажмите кнопку.',
+    debugRetry: 'Я выполнил шаги, всё ещё не работает',
+    debugFixed: 'Пометить как исправлено',
+    stillBrokenMsg: (r) =>
+      `Я выполнил шаги, но баг ВСЁ ЕЩЁ НЕ РАБОТАЕТ. Прочитай вывод логов/инструментации, найди корневую причину по свидетельствам, примени исправление и пришли следующие пошаговые действия для проверки. Если логов или новых свидетельств нет — не угадывай: скажи, чего не хватает, расширь или почини логирование, если оно молчит, и попроси меня повторить шаги. Закончи новой директивой ::debug-loop{round="${r}"}.`,
+    fixedMsg:
+      'Баг ИСПРАВЛЕН. Удали ВСЮ отладочную инструментацию, добавленную в ЛЮБОМ раунде (логи, скрипты, флаги конфига). Не полагайся на память: найди в проекте введённые тобой лог-строки/маркеры и очисти каждый затронутый файл. Верни код в состояние до отладки, перечисли очищенные файлы и отметь всё, что не удалось восстановить полностью.',
+    modeAria: (label) => `Режим ${label} — клик или Shift+Tab для смены`,
+    modeTipSuffix: ' · клик или Shift+Tab: Ask → Agent → Plan → Debug · ',
+    modeHintAsk: 'Только ответы — без правок файлов и изменений',
+    modeHintAgent: 'Полный агентский режим (по умолчанию)',
+    modeHintPlan: 'Только план — без исполнения (/plan)',
+    modeHintDebug: 'Системная отладка: сначала свидетельства, потом фикс'
+  },
+  es: {
+    noSession: 'Sin sesión activa para enviar.',
+    sendFailed: 'No se pudo enviar. Probá desde la caja de prompt.',
+    answersTooLong: 'Las respuestas son demasiado largas para enviar.',
+    pathCopied: 'Path del plan copiado.',
+    toastPlanQ: 'El agente tiene preguntas — respondé en la tarjeta. Modo vuelto a Agent.',
+    toastPlanReady: 'Plan listo — modo vuelto a Agent. Implementá, modificá o escribí en el prompt.',
+    toastDebugReady: 'Tarjeta de debug lista — seguí con sus botones. Modo vuelto a Agent.',
+    planReadyTitle: 'Plan listo — ¿qué hacemos?',
+    planDetailHint: 'Detalle completo en el archivo del plan.',
+    implement: 'Implementar ahora',
+    modify: 'Modificar',
+    copyPath: 'Copiar path',
+    readPlan: 'Leer plan',
+    closePlan: 'Cerrar plan',
+    sending: 'Enviando…',
+    planAltHint: 'O escribí en la caja de prompt para ajustar el plan.',
+    modifyTitle: 'Modificar el plan',
+    modifyDesc: 'Describí qué cambiar. Se envía como turno nuevo que referencia el plan.',
+    modifyPlaceholder: 'Describí qué cambiar del plan…',
+    cancel: 'Cancelar',
+    sendChanges: 'Enviar cambios',
+    implementMsg: (f) => `Implementá el plan de ${f} ahora. Seguilo paso por paso.`,
+    updateMsg: (f, d) => `Actualizá el plan de ${f} con estos cambios: ${d}`,
+    readerNoWorkspace: 'Sin workspace (cwd vacío): no puedo resolver el path.',
+    readerNoRead: 'readFileText no disponible en este shell.',
+    readerBinary: 'El archivo es binario: no se puede mostrar.',
+    readerEmpty: 'Sin plan seleccionado.',
+    readerLoading: 'Leyendo el plan…',
+    readerError: 'No se pudo leer el plan.',
+    readerTruncated: 'Archivo grande: vista truncada a 512 KiB.',
+    planQTitle: 'Preguntas sobre el plan',
+    planQTitleCount: (i, n) => `Preguntas sobre el plan — ${i}/${n}`,
+    qNoAnswer: '(sin respuesta)',
+    answersHeader: (f) => `Respuestas a las preguntas del plan (${f}):`,
+    continueNoQuestions: (f) => `No pude leer o responder tus preguntas (${f}).`,
+    qReadErr: 'No se pudieron leer las preguntas.',
+    qBinary: 'El archivo de preguntas es binario.',
+    qParseErr: 'No pude leer preguntas válidas del archivo.',
+    qInvalid: 'Directiva inválida.',
+    qReading: 'Leyendo las preguntas…',
+    qContinue: 'Continuar sin responder',
+    qOther: 'Otra respuesta…',
+    qWrite: 'Redactá tu respuesta…',
+    qBack: 'Atrás',
+    qNext: 'Siguiente',
+    qSend: 'Enviar respuestas',
+    qAdjust: 'Para ajustar algo, escribí en la caja de prompt.',
+    qAnswerHint: 'Respondé cada pregunta (opción o texto) y enviá todo junto.',
+    debugTitle: (r) => `Modo Debug — ronda ${r}`,
+    debugHint: 'Seguí los pasos del mensaje de arriba; después usá un botón.',
+    debugRetry: "Ya hice los pasos, sigue sin funcionar",
+    debugFixed: 'Marcar como corregido',
+    stillBrokenMsg: (r) =>
+      `Ya hice los pasos y el bug STILL NOT WORKING (sigue roto). Leé la salida de logs/instrumentación, encontrá la causa raíz con evidencia, aplicá la corrección y respondé con los próximos pasos secuenciados para que los pruebe. Si no hay logs o no hay evidencia nueva, no adivines: decí qué falta, ampliá o arreglá el logging si quedó mudo y pedime repetir los pasos para capturarlo. Terminá con una nueva directiva ::debug-loop{round="${r}"}.`,
+    fixedMsg:
+      'El bug está CORREGIDO. Sacá TODA la instrumentación de debug que agregaste en CUALQUIER ronda (logs, scripts, flags de config). No te fíes de la memoria: buscá en el proyecto los strings/marcadores de log que introdujiste y limpialos en cada archivo tocado. Restaurá el código a su estado pre-debug, listá cada archivo limpiado y marcá lo que no pudieras restaurar del todo.',
+    modeAria: (label) => `Modo ${label} — clic o Shift+Tab para cambiar`,
+    modeTipSuffix: ' · clic o Shift+Tab: Ask → Agent → Plan → Debug · ',
+    modeHintAsk: 'Solo responder — nunca editar archivos ni ejecutar mutaciones',
+    modeHintAgent: 'Modo agéntico completo (default)',
+    modeHintPlan: 'Solo escribir el plan — sin ejecutar (/plan)',
+    modeHintDebug: 'Debugging sistemático: primero evidencia, después fix'
+  }
+}
+
+/** Translate against the STR catalogue with an explicit locale (the SDK's
+ *  resolution ladder, mirrored: active language → en → the key itself). */
+function translateWith(loc, key, args) {
+  const table = STR[loc] || STR.en
+  const v = table[key] !== undefined ? table[key] : STR.en[key]
+  if (typeof v === 'function') return v(...args)
+  return typeof v === 'string' ? v : String(key)
+}
+
+/** Mirror of `translateNow` for shells older than the `useI18n` export. */
+const translateEn = Object.assign((key, ...args) => translateWith('en', key, args), {
+  locale: () => 'en'
+})
+
+/** Non-reactive translator for handlers/module functions; set to ctx.i18n.t
+ *  in register(). Until then it resolves against navigator.language. */
+let T = (key, ...args) =>
+  translateWith(
+    ((typeof navigator !== 'undefined' && navigator.language) || 'en').split(/[-_]/)[0].toLowerCase(),
+    key,
+    args
+  )
+
+/** Report the app locale to the backend so the model-facing note localizes. */
+async function stageLocale(ctx, loc) {
+  const value = String(loc || '')
+  if (typeof ctx.rest !== 'function' || !value) return false
+  try {
+    await ctx.rest('/locale', { method: 'POST', body: { locale: value } })
+    return true
+  } catch (_) {
+    return false
+  }
+}
 
 /** Sonda → desktop.log vía console.error (único nivel capturado). */
 /** v13.1: el id que el core conoce es el *stored* (backend). El id de tile runtime no
@@ -175,7 +432,7 @@ async function stageMode(ctx, mode, sidOverride) {
     return false
   }
   try {
-    await ctx.rest('/mode', { method: 'POST', body: { session_id: sid, mode } })
+    await ctx.rest('/mode', { method: 'POST', body: { session_id: sid, mode, locale: appLocale.get() } })
     probe('stage ok mode=' + mode + ' sid=' + String(sid))
     return true
   } catch (e) {
@@ -200,10 +457,10 @@ function probe(msg) {
 }
 
 const MODES = [
-  { id: 'ask', label: 'Ask', icon: 'comment-discussion', hint: 'Answer only — never edit files or run mutations' },
-  { id: 'agent', label: 'Agent', icon: 'hubot', hint: 'Full agentic mode (default)' },
-  { id: 'plan', label: 'Plan', icon: 'checklist', hint: 'Write a plan only — no execution (/plan)' },
-  { id: 'debug', label: 'Debug', icon: 'debug-alt', hint: 'Systematic debugging: evidence first, then fix' }
+  { id: 'ask', label: 'Ask', icon: 'comment-discussion', hintKey: 'modeHintAsk' },
+  { id: 'agent', label: 'Agent', icon: 'hubot', hintKey: 'modeHintAgent' },
+  { id: 'plan', label: 'Plan', icon: 'checklist', hintKey: 'modeHintPlan' },
+  { id: 'debug', label: 'Debug', icon: 'debug-alt', hintKey: 'modeHintDebug' }
 ]
 
 /** Fondo del botón por modo — valores CSS directos (style inline): las clases Tailwind con var()
@@ -476,7 +733,7 @@ function submitTurn(text, displayKind) {
   const sid =
     host.state.focusedSessionId.get() || host.state.activeSessionId.get() || null
   if (!sid) {
-    notifySafe({ kind: 'error', message: 'Sin sesión activa para enviar.' })
+    notifySafe({ kind: 'error', message: T('noSession') })
     return Promise.reject(new Error('no active session'))
   }
   return host.request('prompt.submit', {
@@ -524,10 +781,10 @@ function normalizeQuestions(raw) {
 
 /** Payload de respuestas (v10.10): respuestas del usuario primero, instrucción EN al final. */
 function planQAnswersBody(file, questions, answersMap) {
-  const lines = [`Respuestas a las preguntas del plan (${file}):`]
+  const lines = [T('answersHeader', file)]
   questions.forEach((item, i) => {
     const a = answersMap[i]
-    const shown = a === null || a === undefined || a === '' ? '(sin respuesta)' : String(a)
+    const shown = a === null || a === undefined || a === "" ? T("qNoAnswer") : String(a)
     lines.push(`${i + 1}) ${item.q}`)
     lines.push(`→ ${shown}`)
   })
@@ -540,7 +797,7 @@ function planQAnswersBody(file, questions, answersMap) {
 
 function planQContinueBody(file) {
   return [
-    `No pude leer o responder tus preguntas (${file}).`,
+    T('continueNoQuestions', file),
     '',
     'Continue in PLAN MODE: write the plan now choosing sensible defaults, list the assumptions and open questions in the plan, and end your reply with ONLY the ::plan-approve directive.'
   ].join('\n')
@@ -551,7 +808,7 @@ function submitPlanAnswers(text, label) {
   const body = String(text || '')
   if (!body.trim()) return Promise.reject(new Error('empty answers'))
   if (body.length > 16000) {
-    notifySafe({ kind: 'error', message: 'Las respuestas son demasiado largas para enviar.' })
+    notifySafe({ kind: 'error', message: T('answersTooLong') })
     return Promise.reject(new Error('answers too long'))
   }
   probe(`pq send kind=${label} len=${body.length}`)
@@ -617,12 +874,12 @@ function PlanReaderPane() {
     if (!file) return undefined
     const abs = resolvePlanAbs(file)
     if (!abs) {
-      planReaderView.set({ status: 'err', msg: 'Sin workspace (cwd vacío): no puedo resolver el path.' })
+      planReaderView.set({ status: 'err', msg: T('readerNoWorkspace') })
       return undefined
     }
     const read = typeof window !== 'undefined' && window.hermesDesktop ? window.hermesDesktop.readFileText : null
     if (typeof read !== 'function') {
-      planReaderView.set({ status: 'err', msg: 'readFileText no disponible en este shell.' })
+      planReaderView.set({ status: 'err', msg: T('readerNoRead') })
       return undefined
     }
     let alive = true
@@ -631,7 +888,7 @@ function PlanReaderPane() {
       .then((r) => {
         if (!alive) return
         if (r && r.binary) {
-          planReaderView.set({ status: 'err', msg: 'El archivo es binario: no se puede mostrar.' })
+          planReaderView.set({ status: 'err', msg: T('readerBinary') })
           probe(`planview err file=${file} binary`)
           return
         }
@@ -654,9 +911,9 @@ function PlanReaderPane() {
       className: 'h-full min-h-0 overflow-auto p-2.5 text-(--ui-text-secondary)',
       children
     })
-  if (!file) return wrap('Sin plan seleccionado.')
-  if (view.status === 'loading') return wrap('Leyendo el plan…')
-  if (view.status === 'err') return wrap(view.msg || 'No se pudo leer el plan.')
+  if (!file) return wrap(T('readerEmpty'))
+  if (view.status === 'loading') return wrap(T('readerLoading'))
+  if (view.status === 'err') return wrap(view.msg || T('readerError'))
   const body =
     typeof Streamdown === 'function'
       ? jsx(Streamdown, { mode: 'static', children: view.text || '' })
@@ -672,7 +929,7 @@ function PlanReaderPane() {
       jsx('div', {
         key: 'tr',
         className: 'mb-2 text-xs',
-        children: 'Archivo grande: vista truncada a 512 KiB.'
+        children: T('readerTruncated')
       }),
       body
     ]
@@ -736,16 +993,12 @@ export default {
       )
     }
 
-    ctx.i18n.register({
-      en: {
-        modesLabel: 'Mode',
-        tip: mode => `${mode} mode active`
-      },
-      es: {
-        modesLabel: 'Modo',
-        tip: mode => `Modo ${mode} activo`
-      }
-    })
+    ctx.i18n.register(STR)
+    T = ctx.i18n.t
+
+    // v14: hydrate the locale mirror once ctx exists, and push it to the
+    // backend so the model-facing closing sentence localizes too.
+    void stageLocale(ctx, appLocale.get())
 
     // Restaurar modo persistido (API sync: get(key, fallback) → valor).
     const savedMode = ctx.storage.get('mode', 'agent')
@@ -756,6 +1009,7 @@ export default {
 
     // ── Tarjeta de aprobación: box + editor inline ──
     function PlanApproveCard({ file }) {
+      const t = usePluginI18n(ID)
       const dialogs = useValue(planDialogs)
       const entry = (file && dialogs[file]) || EMPTY_DIALOG
       const modifyOpen = entry.open
@@ -799,11 +1053,11 @@ export default {
             if (key === 'go') applyMark('go', false)
             else if (key === 'edit' && freshMark) applyMark('edit', false)
             setEntry({ sending: null })
-            notifySafe({ kind: 'error', message: 'No se pudo enviar. Probá desde la caja de prompt.' })
+            notifySafe({ kind: 'error', message: T('sendFailed') })
           })
       }
 
-      const implementText = `Implement the plan at ${file} now. Follow it step by step.`
+      const implementText = t('implementMsg', file)
 
       return jsxs('div', {
         ref: rootRef,
@@ -812,7 +1066,7 @@ export default {
           jsx('div', {
             key: 'head',
             className: 'mb-1 text-sm font-semibold',
-            children: `Plan listo — ¿qué hacemos? ${VER}·${BOOT}`
+            children: `${t("planReadyTitle")} ${VER}·${BOOT}`
           }),
           jsx('div', {
             key: 'file',
@@ -822,7 +1076,7 @@ export default {
           jsx('div', {
             key: 'hint',
             className: 'mb-3 text-xs text-(--ui-text-tertiary)',
-            children: 'Detalle completo en el archivo del plan.'
+            children: t('planDetailHint')
           }),
           jsxs('div', {
             key: 'row',
@@ -845,7 +1099,7 @@ export default {
                   marks.go
                     ? jsx(Codicon, { key: 'tick-go', name: 'check', size: '0.75rem', className: 'mr-1 shrink-0' })
                     : null,
-                  sending === 'go' ? 'Enviando…' : 'Implementar ahora'
+                  sending === 'go' ? t('sending') : t('implement')
                 ]
               }),
               jsx(Button, {
@@ -860,7 +1114,7 @@ export default {
                   marks.edit
                     ? jsx(Codicon, { key: 'tick-edit', name: 'check', size: '0.75rem', className: 'mr-1 shrink-0' })
                     : null,
-                  'Modificar'
+                  t('modify')
                 ]
               }),
               jsx(Button, {
@@ -870,12 +1124,12 @@ export default {
                   probe('click copy')
                   try {
                     void ctx.os.writeClipboard(file)
-                    notifySafe({ kind: 'info', message: 'Path del plan copiado.' })
+                    notifySafe({ kind: 'info', message: t('pathCopied') })
                   } catch (_) {
                     /* clipboard best-effort */
                   }
                 },
-                children: 'Copiar path'
+                children: t('copyPath')
               }),
               jsx(Button, {
                 key: 'read',
@@ -898,7 +1152,7 @@ export default {
                     size: '0.75rem',
                     className: 'mr-1 shrink-0'
                   }),
-                  reading ? 'Cerrar plan' : 'Leer plan'
+                  reading ? t('closePlan') : t('readPlan')
                 ]
               })
             ]
@@ -906,7 +1160,7 @@ export default {
           jsx('div', {
             key: 'alt',
             className: 'mt-2 text-xs text-(--ui-text-tertiary)',
-            children: 'O escribí en la caja de prompt para ajustar el plan.'
+            children: t('planAltHint')
           }),
           modifyOpen && jsx('div', {
             key: 'editor',
@@ -916,18 +1170,18 @@ export default {
                 jsx('div', {
                   key: 't',
                   className: 'mb-1 text-xs font-semibold',
-                  children: 'Modificar el plan'
+                  children: t('modifyTitle')
                 }),
                 jsx('div', {
                   key: 'd',
                   className: 'mb-1 text-xs text-(--ui-text-tertiary)',
-                  children: 'Describí qué cambiar. Se envía como turno nuevo que referencia el plan.'
+                  children: t('modifyDesc')
                 }),
                 jsx(Textarea, {
                   key: 'ta',
                   value: draft,
                   rows: 5,
-                  placeholder: 'Describí qué cambiar del plan…',
+                  placeholder: t('modifyPlaceholder'),
                   onChange: (e) => setEntry({ draft: e.target.value })
                 }),
                 jsxs('div', {
@@ -941,7 +1195,7 @@ export default {
                         probe(`close reason=cancel file=${file}`)
                         setEntry({ open: false })
                       },
-                      children: 'Cancelar'
+                      children: t('cancel')
                     }),
                     jsx(Button, {
                       key: 'send',
@@ -950,9 +1204,9 @@ export default {
                         probe(`click edit send file=${file}`)
                         const freshEdit = !isMarked('plan', 'edit', midRef.current, file)
                         applyMark('edit', true)
-                        sendTurn(`Update the plan at ${file} with these changes: ${draft}`, 'edit', freshEdit)
+                        sendTurn(t('updateMsg', file, draft), 'edit', freshEdit)
                       },
-                      children: sending === 'edit' ? 'Enviando…' : 'Enviar cambios'
+                      children: sending === 'edit' ? t('sending') : t('sendChanges')
                     })
                   ]
                 })
@@ -974,6 +1228,7 @@ export default {
 
     // ── Tarjeta de preguntas del plan (v10.10) — stepper dentro de la familia ──
     function PlanQuestionsCard({ file }) {
+      const t = usePluginI18n(ID)
       const all = useValue(planQState)
       const entry = (file && all[file]) || EMPTY_Q
       const rootRef = useRef(null)
@@ -1007,12 +1262,12 @@ export default {
         if (entry.questions) return undefined
         const abs = resolvePlanAbs(file)
         if (!abs) {
-          setQEntry(file, { status: 'err', msg: 'Sin workspace (cwd vacío): no puedo resolver el path.' })
+          setQEntry(file, { status: 'err', msg: T('readerNoWorkspace') })
           return undefined
         }
         const read = typeof window !== 'undefined' && window.hermesDesktop ? window.hermesDesktop.readFileText : null
         if (typeof read !== 'function') {
-          setQEntry(file, { status: 'err', msg: 'readFileText no disponible en este shell.' })
+          setQEntry(file, { status: 'err', msg: T('readerNoRead') })
           return undefined
         }
         let alive = true
@@ -1021,13 +1276,13 @@ export default {
           .then((r) => {
             if (!alive) return
             if (r && r.binary) {
-              setQEntry(file, { status: 'err', msg: 'El archivo de preguntas es binario.' })
+              setQEntry(file, { status: 'err', msg: T('qBinary') })
               probe(`pq load err file=${file} binary`)
               return
             }
             const list = normalizeQuestions(r ? r.text : '')
             if (!list || !list.length) {
-              setQEntry(file, { status: 'err', msg: 'No pude leer preguntas válidas del archivo.' })
+              setQEntry(file, { status: 'err', msg: T('qParseErr') })
               probe(`pq load err file=${file} parse`)
               return
             }
@@ -1127,7 +1382,7 @@ export default {
         const fresh = !isMarked('planq', 'send', midRef.current, file)
         const map = {}
         questions.forEach((_, i) => {
-          map[i] = shownAnswer(answers[i]) || '(sin respuesta)'
+          map[i] = shownAnswer(answers[i]) || t('qNoAnswer')
         })
         applyMark('send', true)
         setQEntry(file, { sending: 'send' })
@@ -1140,7 +1395,7 @@ export default {
             probe(`pq send err ${String((e && e.message) || e)}`)
             if (fresh) applyMark('send', false)
             setQEntry(file, { sending: null })
-            notifySafe({ kind: 'error', message: 'No se pudo enviar. Probá desde la caja de prompt.' })
+            notifySafe({ kind: 'error', message: T('sendFailed') })
           })
       }
       const sendContinue = () => {
@@ -1157,14 +1412,14 @@ export default {
             probe(`pq continue err ${String((e && e.message) || e)}`)
             if (fresh) applyMark('send', false)
             setQEntry(file, { sending: null })
-            notifySafe({ kind: 'error', message: 'No se pudo enviar. Probá desde la caja de prompt.' })
+            notifySafe({ kind: 'error', message: T('sendFailed') })
           })
       }
 
       const header = jsx('div', {
         key: 'head',
         className: 'mb-1 text-sm font-semibold text-(--ui-text-primary)',
-        children: `${total > 0 ? `Preguntas sobre el plan — ${index + 1}/${total}` : 'Preguntas sobre el plan'} · ${VER}·${BOOT}`
+        children: `${total > 0 ? t('planQTitleCount', index + 1, total) : t('planQTitle')} · ${VER}·${BOOT}`
       })
       const shell = (children) =>
         jsxs('div', {
@@ -1177,7 +1432,7 @@ export default {
         disabled: sending || sent,
         'aria-pressed': sent,
         onClick: sendContinue,
-        children: [sent ? tick('tick-cont') : null, sending ? 'Enviando…' : 'Continuar sin responder']
+        children: [sent ? tick('tick-cont') : null, sending ? t('sending') : t('qContinue')]
       })
 
       if (!valid) {
@@ -1186,7 +1441,7 @@ export default {
           jsx('div', {
             key: 'bad',
             className: 'mb-2 text-xs text-(--ui-text-tertiary)',
-            children: 'Directiva inválida.'
+            children: t('qInvalid')
           }),
           fallbackBtn
         ])
@@ -1194,7 +1449,7 @@ export default {
       if (entry.status === 'loading') {
         return shell([
           header,
-          jsx('div', { key: 'ld', className: 'text-xs text-(--ui-text-tertiary)', children: 'Leyendo las preguntas…' })
+          jsx('div', { key: 'ld', className: 'text-xs text-(--ui-text-tertiary)', children: t('qReading') })
         ])
       }
       if (entry.status === 'err' || !current) {
@@ -1203,7 +1458,7 @@ export default {
           jsx('div', {
             key: 'err',
             className: 'mb-2 text-xs text-(--ui-text-tertiary)',
-            children: entry.msg || 'No se pudieron leer las preguntas.'
+            children: entry.msg || T('qReadErr')
           }),
           fallbackBtn
         ])
@@ -1233,7 +1488,7 @@ export default {
         className: cn('w-full justify-start text-left whitespace-normal', otherActive && 'bg-(--ui-control-active-background) text-(--ui-text-primary)'),
         style: otherActive ? { background: 'var(--ui-control-active-background)', color: 'var(--ui-text-primary)' } : undefined,
         onClick: pickOther,
-        children: [otherActive ? tick('tick-other') : null, `${current.options.length + 1}. Otra respuesta…`]
+        children: [otherActive ? tick('tick-other') : null, `${current.options.length + 1}. ${t('qOther')}`]
       })
       const freeField = otherActive
         ? jsx(Textarea, {
@@ -1241,7 +1496,7 @@ export default {
             value: a && typeof a.text === 'string' ? a.text : '',
             maxLength: 500,
             rows: 3,
-            placeholder: 'Redactá tu respuesta…',
+            placeholder: t('qWrite'),
             disabled: sent || sending,
             className: 'mt-1.5',
             onChange: (e) => typeText(e && e.target ? e.target.value : '')
@@ -1265,30 +1520,28 @@ export default {
               key: 'back',
               disabled: sending || index === 0,
               onClick: () => goto(index - 1),
-              children: 'Atrás'
+              children: t('qBack')
             }),
             index < total - 1
               ? jsx(Button, {
                   key: 'next',
                   disabled: sending || sent || !answered(a),
                   onClick: () => goto(index + 1),
-                  children: 'Siguiente'
+                  children: t('qNext')
                 })
               : jsx(Button, {
                   key: 'send',
                   disabled: sending || sent || !allAnswered,
                   'aria-pressed': sent,
                   onClick: sendAnswers,
-                  children: [sent ? tick('tick-send') : null, sending ? 'Enviando…' : 'Enviar respuestas']
+                  children: [sent ? tick('tick-send') : null, sending ? t('sending') : t('qSend')]
                 })
           ]
         }),
         jsx('div', {
           key: 'alt',
           className: 'mt-1.5 text-xs text-(--ui-text-tertiary)',
-          children: sent
-            ? 'Para ajustar algo, escribí en la caja de prompt.'
-            : 'Respondé cada pregunta (opción o texto) y enviá todo junto.'
+          children: sent ? t('qAdjust') : t('qAnswerHint')
         })
       ])
     }
@@ -1304,6 +1557,7 @@ export default {
 
     // ── Tarjeta del bucle de debug ──
     function DebugLoopCard({ round }) {
+      const t = usePluginI18n(ID)
       const sendingMap = useValue(debugSending)
       const rk = `r${round}`
       const sending = sendingMap[rk] || null
@@ -1339,14 +1593,13 @@ export default {
             probe(`send err key=${key} ${String((e && e.message) || e)}`)
             if (key === 'retry' || key === 'fixed') applyMark(key, false)
             setSending(null)
-            notifySafe({ kind: 'error', message: 'No se pudo enviar. Probá desde la caja de prompt.' })
+            notifySafe({ kind: 'error', message: T('sendFailed') })
           })
       }
 
       const nextRound = (Number(round) || 0) + 1
-      const stillBrokenText = `I already did the steps and the bug is STILL NOT WORKING. Read the debug logs/instrumentation output, find the root cause with evidence, apply the fix, and reply with the next sequential steps for me to test. If there are no logs or no new evidence, do not guess: say what is missing, extend or fix the logging if it failed silently, and ask me to re-run the steps to capture it. End with a new ::debug-loop{round="${nextRound}"} directive.`
-      const fixedText =
-        'The bug is FIXED. Remove ALL the debug instrumentation you added in ANY round (logs, scripts, config flags). Do not rely on memory: search the project for the log strings/markers you introduced and clean every file you touched. Restore the code to its pre-debug state, list each file cleaned, and flag anything you could not fully restore.'
+      const stillBrokenText = t('stillBrokenMsg', nextRound)
+      const fixedText = t('fixedMsg')
 
       return jsxs('div', {
         ref: rootRef,
@@ -1355,12 +1608,12 @@ export default {
           jsx('div', {
             key: 'head',
             className: 'mb-1 text-sm font-semibold',
-            children: `Modo Debug — ronda ${valid ? round : '?'} ${VER}·${BOOT}`
+            children: `${t('debugTitle', valid ? round : '?')} ${VER}·${BOOT}`
           }),
           jsx('div', {
             key: 'hint',
             className: 'mb-3 text-xs text-(--ui-text-tertiary)',
-            children: 'Seguí los pasos del mensaje de arriba; después usá un botón.'
+            children: t('debugHint')
           }),
           jsxs('div', {
             key: 'row',
@@ -1383,7 +1636,7 @@ export default {
                   marks.retry
                     ? jsx(Codicon, { key: 'tick-retry', name: 'check', size: '0.75rem', className: 'mr-1 shrink-0' })
                     : null,
-                  sending === 'retry' ? 'Enviando…' : "I already did the steps, it's still not working"
+                  sending === 'retry' ? t('sending') : t('debugRetry')
                 ]
               }),
               jsx(Button, {
@@ -1403,7 +1656,7 @@ export default {
                   marks.fixed
                     ? jsx(Codicon, { key: 'tick-fixed', name: 'check', size: '0.75rem', className: 'mr-1 shrink-0' })
                     : null,
-                  sending === 'fixed' ? 'Enviando…' : 'Mark as fixed'
+                  sending === 'fixed' ? t('sending') : t('debugFixed')
                 ]
               })
             ]
@@ -1437,7 +1690,7 @@ export default {
             probe('auto-reset planq->agent')
             notifySafe({
               kind: 'info',
-              message: 'El agente tiene preguntas — respondé en la tarjeta. Modo vuelto a Agent.'
+              message: T('toastPlanQ')
             })
             return
           }
@@ -1446,7 +1699,7 @@ export default {
             probe('auto-reset to agent')
             notifySafe({
               kind: 'info',
-              message: 'Plan listo — modo vuelto a Agent. Implementá, modificá o escribí en el prompt.'
+              message: T('toastPlanReady')
             })
           }
         } catch (_) {
@@ -1467,7 +1720,7 @@ export default {
           if (!text.includes('::debug-loop')) return
           applyMode(ctx, 'agent')
           probe('auto-reset debug->agent')
-          notifySafe({ kind: 'info', message: 'Tarjeta de debug lista — seguí con sus botones. Modo vuelto a Agent.' })
+          notifySafe({ kind: 'info', message: T('toastDebugReady') })
         } catch (_) {
           /* un listener nunca debe romper el dispatch */
         }
@@ -1495,9 +1748,20 @@ export default {
 
     // ── Botón único de modo en la tira del composer ──
     function ModeButton() {
+      const t = usePluginI18n(ID)
+      const { locale } = useI18n()
       const mode = useValue(activeMode)
       const sid = useValue(host.state.focusedSessionId)
       const current = MODES.find((m) => m.id === mode) || MODES[0]
+
+      // v14: mirror the app locale for the backend (model-facing sentences) and
+      // keep the module-level T() handlers honest across locale switches.
+      useEffect(() => {
+        if (locale && locale !== appLocale.get()) {
+          appLocale.set(locale)
+          void stageLocale(ctx, locale)
+        }
+      }, [locale])
 
       // Reset por sesión nueva. D1 (consejo MODEB-V10): el nacimiento desde borrador
       // (null a id) NO es sesión nueva — elegir el modo en el borrador sobrevive al primer
@@ -1519,11 +1783,11 @@ export default {
         children: [
           jsx(Tip, {
             key: 'mode',
-            label: `${current.hint} · clic o Shift+Tab: Ask → Agent → Plan → Debug · ${VER}·${BOOT}`,
+            label: `${t(current.hintKey)}${t('modeTipSuffix')}${VER}·${BOOT}`,
             children: jsxs('button', {
               type: 'button',
               'data-mode': current.id,
-              'aria-label': `Modo ${current.label} — clic o Shift+Tab para cambiar`,
+              'aria-label': t('modeAria', current.label),
               className: cn(
                 'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[0.6875rem] font-medium transition-opacity',
                 'hover:opacity-90'
