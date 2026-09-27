@@ -26,6 +26,19 @@ def test_ask_mode_frames_the_turn_with_the_note(ctx, plugin):
     assert result == {"context": ASK_NOTE}
 
 
+def test_the_note_localizes_with_the_persisted_app_locale(ctx, plugin, monkeypatch):
+    """The desktop stage persists the app language; the next turn's note follows it."""
+    monkeypatch.setenv("HERMES_COMPOSER_MODES_LANG", "en")  # stabilize the fallback rung
+    store = plugin.store.load_store(plugin.PLUGIN_NAME)
+    store.set_mode("sess-ru", "ask")
+    store.set_locale("ru-RU")
+    result = ctx.hooks["pre_llm_call"][0](session_id="sess-ru", user_message="что делает?")
+    assert result and "Я в режиме Ask" in result["context"]
+    store.set_locale("de-DE")  # unsupported app language → English, not Spanish
+    result = ctx.hooks["pre_llm_call"][0](session_id="sess-ru", user_message="was macht das?")
+    assert result and "I am in Ask mode" in result["context"]
+
+
 def test_agent_mode_adds_nothing(ctx):
     assert ctx.hooks["pre_llm_call"][0](session_id="sess-agent", user_message="hi") is None
 
@@ -57,13 +70,21 @@ def test_agent_mode_never_blocks(ctx):
     assert ctx.hooks["pre_tool_call"][0](tool_name="write_file", args={}, session_id="sess-x") is None
 
 
-def test_mode_command_sets_the_default(ctx, plugin):
+def test_mode_command_sets_the_default(ctx, plugin, monkeypatch):
+    monkeypatch.setenv("HERMES_COMPOSER_MODES_LANG", "en")
     out = ctx.commands["mode"]("plan")
     assert "plan" in out
     assert plugin.store.load_store(plugin.PLUGIN_NAME).get_default() == "plan"
     assert "ask" in ctx.commands["mode"]("")  # bare /mode reports the state
     assert "Unknown" in ctx.commands["mode"]("banana")
     assert plugin.store.load_store(plugin.PLUGIN_NAME).get_default() == "plan"
+
+
+def test_mode_command_replies_localize(ctx, plugin, monkeypatch):
+    monkeypatch.setenv("HERMES_COMPOSER_MODES_LANG", "ru")
+    assert "Неизвестный режим" in ctx.commands["mode"]("banana")
+    monkeypatch.setenv("HERMES_COMPOSER_MODES_LANG", "en")
+    assert "Unknown mode" in ctx.commands["mode"]("banana")
 
 
 def test_mode_command_accepts_off(ctx, plugin):
@@ -95,3 +116,26 @@ def test_dashboard_api_shares_the_store(ctx, plugin):
     assert bad.status_code == 400
     dropped = asyncio.run(api.reset({"session_id": "sess-api"}))
     assert dropped["mode"] == "agent"
+
+
+def test_dashboard_locale_routes_reach_the_agent_half(ctx, plugin):
+    """POST /locale and the locale carried by POST /mode land in the shared
+    store, and the framed note follows them."""
+    pytest = __import__("pytest")
+    pytest.importorskip("fastapi")
+    spec = importlib.util.spec_from_file_location(
+        "composer_modes_api_probe_locale", ROOT / "dashboard" / "plugin_api.py"
+    )
+    assert spec and spec.loader
+    api = importlib.util.module_from_spec(spec)
+    sys.modules["composer_modes_api_probe_locale"] = api
+    spec.loader.exec_module(api)
+
+    stored = asyncio.run(api.write_locale({"locale": "ru"}))
+    assert stored["ok"] is True and stored["locale"] == "ru"
+    store = plugin.store.load_store(plugin.PLUGIN_NAME)
+    assert store.get_locale() == "ru"
+    asyncio.run(api.write_mode({"session_id": "sess-loc", "mode": "ask", "locale": "es-AR"}))
+    assert store.get_locale() == "es-AR"
+    note = ctx.hooks["pre_llm_call"][0](session_id="sess-loc", user_message="hola")
+    assert note and "Estoy en modo Ask" in note["context"]

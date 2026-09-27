@@ -37,11 +37,25 @@ def test_notes_are_non_empty_and_tagged(mode):
     assert len(note) > 200
 
 
-def test_ask_note_keeps_the_mandated_closing_sentence():
-    """The owner's ask contract: the closing sentence is verbatim, only A/B/C adapts."""
-    assert "Estoy en modo Ask, solo puedo responder." in ASK_NOTE
-    assert "tenés que pedírmelo en modo Agent." in ASK_NOTE
+def test_ask_note_closing_sentence_follows_the_language_not_a_hardcode():
+    """The ask contract: the closing sentence is verbatim per language, resolved
+    through the i18n ladder — never one hardcoded Spanish line."""
     assert "Never claim or pretend to have performed an action you did not perform." in ASK_NOTE
+    # with nothing configured, the default resolves from the system locale; the
+    # ladder still answers explicitly per requested language:
+    assert "I am in Ask mode and can only answer." in (note_for("ask", "en") or "")
+    assert "Я в режиме Ask и могу только отвечать." in (note_for("ask", "ru") or "")
+    assert "Estoy en modo Ask, solo puedo responder." in (note_for("ask", "es") or "")
+    # unknown locales degrade to English, never crash, never force Spanish
+    assert "I am in Ask mode" in (note_for("ask", "th-TH") or "")
+
+
+def test_notes_carry_the_answer_language_clause():
+    from i18n import answer_language_clause
+
+    assert "по-русски" in (note_for("ask", "ru") or "")
+    assert answer_language_clause("en") in (note_for("plan", "en") or "")
+    assert answer_language_clause("en") in (note_for("debug", "en") or "")
 
 
 def test_plan_note_carries_the_approval_and_questions_directives():

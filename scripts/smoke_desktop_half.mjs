@@ -58,6 +58,8 @@ export const Codicon = 'span'
 export const Streamdown = 'div'
 export const Textarea = 'textarea'
 export const Tip = 'div'
+export const useI18n = () => ({ locale: 'en' })
+export const usePluginI18n = () => (key, ...args) => String(key)
 `
 
 const reactBody = `
@@ -132,7 +134,7 @@ const ctx = {
   },
   rest: async (url, opts) => { stages.push({ url, opts }); return { ok: true } },
   onDispose: (fn) => disposers.push(fn),
-  i18n: { register: () => {} },
+  i18n: { register: () => {}, t: (key, ...args) => String(key) },
   register: (c) => { contributions.push(c); return () => {} },
   registerMany: (cs) => { contributions.push(...cs); return () => {} }
 }
@@ -167,13 +169,18 @@ if (!middleware?.data?.handler) {
   const draft = { text: 'explain this function', attachments: [] }
   const out = await middleware.data.handler(draft)
   if (out !== draft) fail('the middleware must return the SAME draft object (never rewrite the text)')
-  if (!stages.length) fail('the middleware did not stage the mode')
+  // v14: register() may have pushed a /locale hydration stage first — look at /mode.
+  const modeStages = stages.filter((s) => s.url === '/mode')
+  if (!modeStages.length) fail('the middleware did not stage the mode')
   else {
-    const [stage] = stages
-    if (stage.url !== '/mode') fail(`staged the wrong path: ${stage.url}`)
+    const [stage] = modeStages
     if (stage.opts?.method !== 'POST') fail(`staged with the wrong method: ${stage.opts?.method}`)
     const body = stage.opts?.body || {}
     if (body.mode !== 'agent') fail(`staged the wrong mode: ${JSON.stringify(body)}`)
+    // v14: the mode stage carries the app locale so the model-facing note localizes.
+    if (typeof body.locale !== 'string' || !body.locale) {
+      fail(`the mode stage must carry the app locale: ${JSON.stringify(body)}`)
+    }
     // Regression (v13.1): the backend keys the mode by the session id the CORE knows
     // (`agent.session_id`). The runtime tile id never matches it, so the note never
     // reached a turn — the stage must carry the STORED id, not the focused runtime one.
@@ -188,14 +195,15 @@ if (!middleware?.data?.handler) {
   sdk.host.state.focusedStoredSessionId.set(null)
   await middleware.data.handler({ text: 'no stored id', attachments: [] })
   sdk.host.state.focusedStoredSessionId.set('sess-stored')
-  if (stages[0]?.opts?.body?.session_id !== 'sess-runtime') {
-    fail(`without a stored id the stage must fall back to the runtime id: ${JSON.stringify(stages[0]?.opts?.body)}`)
+  const fallbackStage = stages.filter((s) => s.url === '/mode')[0]
+  if (fallbackStage?.opts?.body?.session_id !== 'sess-runtime') {
+    fail(`without a stored id the stage must fall back to the runtime id: ${JSON.stringify(fallbackStage?.opts?.body)}`)
   } else ok('stage falls back to the runtime id when no stored id exists')
 
   const slash = { text: '/plan ship it', attachments: [] }
   stages.length = 0
   await middleware.data.handler(slash)
-  if (stages.length) fail('a slash command must not be staged')
+  if (stages.filter((s) => s.url === '/mode').length) fail('a slash command must not be staged')
   else ok('slash commands are not staged')
 
   stages.length = 0

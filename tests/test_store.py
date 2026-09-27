@@ -88,6 +88,30 @@ def test_snapshot_shape(store):
     snap = store.snapshot()
     assert snap["sessions"]["s"] == "plan"
     assert snap["default"] == "agent"
+    assert snap["locale"] == ""
+
+
+def test_locale_round_trips_and_persists(store, tmp_path):
+    assert store.get_locale() == ""
+    assert store.set_locale("ru-RU") == "ru-RU"
+    assert store.get_locale() == "ru-RU"
+    payload = json.loads((tmp_path / "composer-modes-test" / "state.json").read_text(encoding="utf-8"))
+    assert payload["locale"] == "ru-RU"
+    store.set_locale("")
+    assert store.get_locale() == ""
+
+
+def test_locale_survives_a_reload(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "_data_dir", lambda name: tmp_path / name)
+    first = store_mod.ModeStore("composer-modes-test")
+    first.set_locale("es-AR")
+    second = store_mod.ModeStore("composer-modes-test")
+    assert second.get_locale() == "es-AR"
+
+
+def test_locale_is_trimmed_not_trusted(store):
+    store.set_locale("  " + "x" * 40 + "  ")
+    assert len(store.get_locale()) <= 20
 
 
 def test_load_store_is_a_singleton_per_process(tmp_path, monkeypatch):
