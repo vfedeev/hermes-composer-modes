@@ -127,6 +127,7 @@ live in [`docs/localization.md`](docs/localization.md).
 ```bash
 hermes plugins validate .                                  # manifest + declared capabilities
 python -m pytest -c tests/pytest.ini                       # the shipped suite (no Hermes needed)
+python scripts/lang_matrix.py                          # multilingual acceptance: en/ru/es + fallbacks
 hermes plugins list | grep composer-modes                  # after installing
 ```
 
@@ -146,7 +147,7 @@ dashboard/      plugin_api.py — the REST namespace the desktop half talks to
 desktop/        plugin.js — mode button, plan card, plan reader pane, debug loop card
 skills/         the mode protocol as a loadable skill
 scripts/        verify_note.py + smoke_desktop_half.mjs (repository gates)
-tests/          pytest suite (131 tests)
+tests/          pytest suite (141 tests)
 docs/           architecture, limits, verification, localization
 ```
 

@@ -30,6 +30,9 @@ jobs:
       - name: Desktop half smoke test (loads, wires, stages)
         run: node scripts/smoke_desktop_half.mjs
 
+      - name: Language matrix (real API -> store -> hook, en/ru/es + fallback)
+        run: python scripts/lang_matrix.py
+
       - name: Manifest sanity
         run: |
           python - <<'PY'

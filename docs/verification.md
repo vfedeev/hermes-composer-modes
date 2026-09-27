@@ -8,9 +8,18 @@ only a live turn proves. Run them in that order and report real output.
 ```bash
 node --check desktop/plugin.js            # the desktop half parses as plain ESM
 node scripts/smoke_desktop_half.mjs       # loads it with SDK stubs: wires + stages, never rewrites
-python -m pytest -c tests/pytest.ini      # 103 tests: modes, store, enforcement, wiring, API
+python -m pytest -c tests/pytest.ini      # 141 tests: modes, store, enforcement, wiring, API, i18n
+python scripts/lang_matrix.py             # the whole language ladder printed: ru/es/en + fallbacks
 hermes plugins validate .                 # manifest + capability probe against register()
 ```
+
+`scripts/lang_matrix.py` is the multilingual acceptance test: it drives the real
+chain (POST /locale → state.json → `pre_llm_call`) for every supported language
+and the unsupported ones that must fall back to English, prints the ask closing
+sentence, the answer-language clause and the `/mode` reply per row, reads the
+desktop `STR` catalogue through Node and checks en/ru/es key parity. The
+bilingual assertions themselves run inside pytest (`tests/test_bilingual.py`) —
+including the invariant that protocol tokens are identical in every language.
 
 `hermes plugins validate` is the same check the catalog CI runs: manifest fields,
 `requires_hermes`, and a probe that imports `register()` in isolation and compares what

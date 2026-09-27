@@ -67,7 +67,7 @@ _ANSWER_CLAUSE = {
 #: model adapts to the refused action(s).
 _ASK_CLOSING = {
     "en": "I am in Ask mode and can only answer. If you want me to proceed with {actions}, ask me in Agent mode.",
-    "ru": "Я в режиме Ask и могу только отвечать. Если нужно, чтобы я {actions}, попроси меня об этом в режиме Agent.",
+    "ru": "Я в режиме Ask и могу только отвечать. Если нужно {actions} — попроси меня об этом в режиме Agent.",
     "es": "Estoy en modo Ask, solo puedo responder. Si querés que proceda a {actions}, tenés que pedírmelo en modo Agent.",
 }
 

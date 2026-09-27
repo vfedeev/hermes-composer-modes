@@ -33,10 +33,14 @@ and the cards spoke Spanish. This release localizes both channels:
 - **docs**: `docs/localization.md` — the two-channel contract (protocol wording is
   always English; voice localizes), the ladder, the adding-a-language checklist,
   the behavior matrix, and upstream-patch guidance.
-- **tests**: 103 → 131. New `tests/test_i18n.py` pins the ladder and the English
-  floor; ask-closing tests now assert per-language resolution instead of one
-  Spanish literal; store/API/register cover the locale routes. Smoke harness
-  asserts the `/mode` stage carries the locale.
+- **tests**: 103 → 141. New `tests/test_i18n.py` pins the ladder and the English
+  floor; `tests/test_bilingual.py` drives the real chain (API → store → hook) in
+  EN↔RU, switches language mid-session A/B/A, and pins that protocol tokens are
+  identical in every language; ask-closing tests now assert per-language
+  resolution instead of one Spanish literal; store/register cover the locale
+  routes. Smoke harness asserts the `/mode` stage carries the locale. The
+  multilingual acceptance script `scripts/lang_matrix.py` (also in CI) prints
+  the whole ladder per language for human review.
 - **pinning the minimum task**: to force Russian regardless of the system, set
   `HERMES_COMPOSER_MODES_LANG=ru` (or pick Русский in app Settings) — no string
   patching needed, which is why the fork did not simply hardcode Russian.
