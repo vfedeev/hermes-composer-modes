@@ -11,6 +11,7 @@ Routes
 ``GET  /mode?session_id=…``  the mode that will frame the next turn
 ``POST /mode``               ``{session_id?, mode, locale?}`` — pin a session (or the default)
 ``POST /locale``             ``{locale}`` — report the app's display language
+``GET  /plan?path=…``        read a plan/questions file (backend disk, whitelist)
 ``POST /reset``              ``{session_id}`` — drop a session's pin
 ``GET  /health``             liveness + version
 
@@ -22,6 +23,7 @@ locale drives the language of the model-facing sentences (see ``i18n.py``).
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -141,6 +143,40 @@ async def write_locale(body: Optional[dict] = None) -> Any:
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
     return {"ok": True, "locale": store.get_locale()}
+
+
+PLAN_READ_RE = re.compile(r"^[^\x00]*/\.hermes/plans/([A-Za-z0-9._-]{1,160})\.(md|json)$")
+PLAN_MAX_BYTES = 512_000
+
+
+async def read_plan(payload: dict) -> dict:
+    """Read-only plan/questions file reader for remote backends.
+
+    In SSH/cloud mode the desktop half lives on the client machine and its
+    local IPC (hermes:readFileText) cannot see the backend's disk — the file
+    the agent just wrote 'does not exist' there. This route reads it where it
+    actually lives. Security shape: only plain names directly under a
+    ``.hermes/plans/`` directory, no traversal, no globs, bounded size.
+    """
+    raw = payload.get("path") if isinstance(payload, dict) else payload
+    path = str(raw or "")
+    if ".." in path or not PLAN_READ_RE.match(path):
+        return {"ok": False, "error": "invalid-path"}
+    p = Path(path)
+    try:
+        if not p.is_file():
+            return {"ok": False, "error": "not-found"}
+        if p.stat().st_size > PLAN_MAX_BYTES:
+            return {"ok": False, "error": "too-large"}
+        return {"ok": True, "text": p.read_text(encoding="utf-8", errors="replace")}
+    except OSError:
+        return {"ok": False, "error": "not-found"}
+
+
+@router.get("/plan")
+async def get_plan(path: str = ""):
+    """GET /plan?path=<abs path under .hermes/plans/> — text or a safe error."""
+    return await read_plan({"path": path})
 
 
 @router.post("/reset")
