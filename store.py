@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-__all__ = ["DEFAULT_MODE", "ModeStore", "load_store", "STORE_MODULE_NAME"]
+__all__ = ["DEFAULT_MODE", "LOCALE_KEY", "ModeStore", "load_store", "STORE_MODULE_NAME"]
 
 STORE_MODULE_NAME = "composer_modes_store"
 
@@ -30,6 +30,10 @@ _VALID_MODES = ("ask", "agent", "plan", "debug")
 
 #: Sessions untouched for this long are dropped on the next write.
 SESSION_TTL_SECONDS = 30 * 24 * 3600
+
+#: The last app locale the desktop half reported (persisted so a restarted
+#: backend keeps answering in the user's language until the app re-syncs it).
+LOCALE_KEY = "locale"
 
 
 def _data_dir(name: str) -> Path:
@@ -51,7 +55,7 @@ class ModeStore:
 
     Shape on disk::
 
-        {"version": 1, "default": "agent",
+        {"version": 1, "default": "agent", "locale": "ru",
          "sessions": {"<session id>": {"mode": "ask", "updated_at": 1726500000.0}}}
     """
 
@@ -61,6 +65,7 @@ class ModeStore:
         self._lock = threading.RLock()
         self._path = _data_dir(name) / "state.json"
         self._default = DEFAULT_MODE
+        self._locale = ""
         self._sessions: dict[str, dict[str, Any]] = {}
         self._mtime = 0.0
         self._load(force=True)
@@ -81,6 +86,7 @@ class ModeStore:
                 data = {}
             default = data.get("default")
             self._default = default if default in _VALID_MODES else DEFAULT_MODE
+            self._locale = str(data.get(LOCALE_KEY) or "")[:20]
             sessions = data.get("sessions")
             self._sessions = {
                 str(sid): {
@@ -98,7 +104,12 @@ class ModeStore:
             self._sessions = {
                 sid: rec for sid, rec in self._sessions.items() if rec["updated_at"] >= cutoff
             }
-            payload = {"version": 1, "default": self._default, "sessions": self._sessions}
+            payload = {
+                "version": 1,
+                "default": self._default,
+                LOCALE_KEY: self._locale,
+                "sessions": self._sessions,
+            }
             try:
                 self._path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = self._path.with_suffix(".json.tmp")
@@ -124,11 +135,28 @@ class ModeStore:
             self._load()
             return self._default
 
+    # ── app locale (reported by the desktop half; see i18n.py) ───────────────
+    def get_locale(self) -> str:
+        with self._lock:
+            self._load()
+            return self._locale
+
+    def set_locale(self, value: str) -> str:
+        """Persist the app's active display language ('' clears it)."""
+        clean = str(value or "").strip()[:20]
+        with self._lock:
+            self._load()
+            if clean != self._locale:
+                self._locale = clean
+                self._save()
+            return self._locale
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             self._load()
             return {
                 "default": self._default,
+                "locale": self._locale,
                 "sessions": {sid: rec["mode"] for sid, rec in self._sessions.items()},
             }
 

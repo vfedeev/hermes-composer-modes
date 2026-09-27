@@ -23,11 +23,10 @@ from pathlib import Path
 from . import enforce
 from .modes import DEFAULT_MODE, LABELS, MODE_IDS, is_mode, is_slash_shaped, note_for
 from .store import load_store
-
 __all__ = ["register"]
 
 PLUGIN_NAME = "composer-modes"
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 _SKILL_PATH = Path(__file__).parent / "skills" / "composer-modes" / "SKILL.md"
 
 
@@ -47,7 +46,7 @@ def register(ctx):  # noqa: ANN001 - PluginContext from hermes_cli.plugins
     def on_pre_llm_call(session_id: str = "", user_message=None, platform: str = "", **kwargs):
         try:
             mode = store.get_mode(session_id)
-            note = note_for(mode)
+            note = note_for(mode, store.get_locale())
             if not note:
                 return None
             text = user_message if isinstance(user_message, str) else ""
@@ -83,20 +82,21 @@ def register(ctx):  # noqa: ANN001 - PluginContext from hermes_cli.plugins
 
     # ── /mode on every surface (CLI, TUI, desktop composer, messaging) ──────
     def on_mode_command(raw_args: str = "") -> str:
+        from .modes import mode_message, resolve_lang  # local: keeps the module import graph flat
+
         arg = (raw_args or "").strip().split()[0].lower() if (raw_args or "").strip() else ""
+        lang = resolve_lang(store.get_locale())
         if not arg or arg in {"?", "help", "status"}:
-            return (
-                f"Composer modes: {' | '.join(MODE_IDS)} — default is '{store.get_default()}'. "
-                f"Use /mode <id> to change it. In the desktop app the mode button sets it per session."
+            return mode_message(
+                "list", lang, ids=" | ".join(MODE_IDS), default=store.get_default()
             )
         if arg in {"off", "none", "normal"}:
             arg = "agent"
         if not is_mode(arg):
-            return f"Unknown mode '{arg}'. Known modes: {', '.join(MODE_IDS)}."
+            return mode_message("unknown", lang, arg=arg, ids=", ".join(MODE_IDS))
         store.set_default(arg)
-        return (
-            f"Default composer mode set to '{LABELS.get(arg, arg)}' ({arg}). "
-            f"Sessions with their own mode keep it — change that in the desktop composer."
+        return mode_message(
+            "set", lang, label=LABELS.get(arg, arg), arg=arg
         )
 
     ctx.register_command(

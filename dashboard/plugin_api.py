@@ -7,14 +7,16 @@ scoped to this namespace by construction and profile-aware.
 
 Routes
 ------
-``GET  /state``              every known session mode + the default
+``GET  /state``              every known session mode + the default + the locale
 ``GET  /mode?session_id=…``  the mode that will frame the next turn
-``POST /mode``               ``{session_id?, mode}`` — pin a session (or the default)
+``POST /mode``               ``{session_id?, mode, locale?}`` — pin a session (or the default)
+``POST /locale``             ``{locale}`` — report the app's display language
 ``POST /reset``              ``{session_id}`` — drop a session's pin
 ``GET  /health``             liveness + version
 
 The state itself lives in ``store.py`` beside this file and is shared with the
-agent half (same process) through a file-backed, mtime-checked store.
+agent half (same process) through a file-backed, mtime-checked store. The
+locale drives the language of the model-facing sentences (see ``i18n.py``).
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 PLUGIN_NAME = "composer-modes"
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 STORE_MODULE = "composer_modes_store"
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
@@ -73,6 +75,7 @@ async def state() -> dict:
         "version": VERSION,
         "modes": list(MODES),
         "default": snapshot["default"],
+        "locale": snapshot.get("locale", ""),
         "sessions": snapshot["sessions"],
         "enforce_ask": True,
     }
@@ -87,10 +90,11 @@ async def read_mode(session_id: Optional[str] = None) -> dict:
 
 @router.post("/mode")
 async def write_mode(body: Optional[dict] = None) -> Any:
-    """Pin a mode. Body: ``{"session_id": "...", "mode": "ask"}``.
+    """Pin a mode. Body: ``{"session_id": "...", "mode": "ask", "locale": "ru"}``.
 
     ``mode: "default"`` (or a missing ``session_id``) writes the default instead
-    of pinning a session.
+    of pinning a session. A ``locale`` travels with the stage and persists, so
+    the model-facing note follows the app's display language.
     """
     payload = body if isinstance(body, dict) else {}
     mode = str(payload.get("mode") or "").strip().lower()
@@ -104,13 +108,39 @@ async def write_mode(body: Optional[dict] = None) -> Any:
         )
     try:
         store = _store()
+        locale = payload.get("locale")
+        if locale is not None:
+            store.set_locale(str(locale))
         if sid:
             store.set_mode(sid, mode)
         else:
             store.set_default(mode)
     except Exception as exc:  # never 500 into the composer
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
-    return {"ok": True, "session_id": sid, "mode": mode, "default": store.get_default()}
+    return {
+        "ok": True,
+        "session_id": sid,
+        "mode": mode,
+        "default": store.get_default(),
+        "locale": store.get_locale(),
+    }
+
+
+@router.post("/locale")
+async def write_locale(body: Optional[dict] = None) -> Any:
+    """Report the app's display language. Body: ``{"locale": "ru"}``.
+
+    Raw codes ('ru', 'ru-RU', 'es-AR', 'en-US'…) are stored as-is and
+    normalized by the note builder; unknown values degrade to English there.
+    """
+    payload = body if isinstance(body, dict) else {}
+    value = str(payload.get("locale") or "").strip()[:20]
+    try:
+        store = _store()
+        store.set_locale(value)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+    return {"ok": True, "locale": store.get_locale()}
 
 
 @router.post("/reset")

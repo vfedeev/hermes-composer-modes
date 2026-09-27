@@ -20,9 +20,11 @@ Nothing is added. Answer normally with the full toolset.
   memory, cron, browser/computer control) are **blocked by the plugin**, not just
   discouraged — a blocked call returns a `[composer-modes]` message.
 - When the request needs an action, do the read-only part, then close with the
-  mandated sentence, adapting only the A/B/C list:
+  mandated sentence **in the user's response language** (the mode note carries
+  it verbatim, resolved from the app/system locale — see docs/localization.md),
+  adapting only the A/B/C list. English fallback:
 
-  > Estoy en modo Ask, solo puedo responder. Si querés que proceda a A/B/C tenés que pedírmelo en modo Agent.
+  > I am in Ask mode and can only answer. If you want me to proceed with A/B/C, ask me in Agent mode.
 
 - Never claim an action you did not perform, and never work around a block.
 

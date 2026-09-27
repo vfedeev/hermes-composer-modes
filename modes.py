@@ -5,11 +5,22 @@ the model reads lives here. Notes are per-turn operating instructions delivered
 through the ``pre_llm_call`` hook: Hermes merges them into the model-facing
 bytes of the current user message (``api_content``) and the durable row, the
 bubble, the sidebar preview and the session title keep exactly what was typed.
+
+Notes are built in English (protocol wording the desktop relies on) plus one
+localized tail from ``i18n.py``: the answer-language clause every mode appends
+and the mandated ask-mode closing sentence. That is what keeps the model from
+straying into a hardcoded language — the old build shipped an Argentine-Spanish
+closing line regardless of the user's system (see docs/localization.md).
 """
 
 from __future__ import annotations
 
 import re
+
+try:  # loaded as a package by Hermes (``from .modes import``)
+    from .i18n import answer_language_clause, ask_closing_sentence, mode_message, resolve_lang
+except ImportError:  # loaded standalone (tests put the repo root on sys.path)
+    from i18n import answer_language_clause, ask_closing_sentence, mode_message, resolve_lang
 
 __all__ = [
     "MODE_IDS",
@@ -44,17 +55,23 @@ def is_mode(value: object) -> bool:
     return isinstance(value, str) and value in MODE_IDS
 
 
-def note_for(mode: object) -> str | None:
-    """The operating note for *mode*, or ``None`` for a pass-through turn."""
+def note_for(mode: object, app_locale: str = "") -> str | None:
+    """The operating note for *mode*, or ``None`` for a pass-through turn.
+
+    Language-neutral: resolves the response language through ``i18n.resolve_lang``
+    on every call (``app_locale`` being the desktop app's active language when
+    known), so a locale switch takes effect on the next turn with no reload.
+    """
     if not is_mode(mode):
         return None
-    return NOTES.get(mode)  # type: ignore[arg-type]
+    return NOTES.get(mode, None, app_locale)  # type: ignore[arg-type]
 
 
-# ── Notes (English on purpose: they go straight to the model) ────────────────
+# ── Notes (protocol wording stays English; only the voice localizes) ─────────
 #
-# ask  — read-only turn. v1 wording, tuned live; the closing sentence is a hard
-#        contract: adapt only the A/B/C list, keep the rest verbatim.
+# ask  — read-only turn. The closing sentence is a hard contract, but its
+#        LANGUAGE comes from the i18n ladder, never a literal: the model quotes
+#        ask_closing_sentence() in the user's own language.
 # plan — verbatim replica of the core's plan-mode rules (``agent/plan_prompt.py``)
 #        plus the plan-craft block, the one-round questions protocol and the
 #        ``::plan-approve`` directive the desktop card renders. Re-sync with the
@@ -63,21 +80,27 @@ def note_for(mode: object) -> str | None:
 #        ``::debug-loop`` directive the desktop card renders.
 # agent — no note at all.
 
-ASK_NOTE = (
-    "[mode:ask] STRICT ASK MODE — read-only turn. Allowed: reading files, "
-    "listing/searching the filesystem, and read-only inspection commands (e.g. cat, head, tail, "
-    "grep, find, wc, stat, diff, sha256sum, git status/log/diff/show, version checks) and "
-    "equivalent one-shot non-mutating commands. Forbidden — do NOT do any of these, even if asked: "
-    "create, edit, rename, move, delete or transform any file; write, patch, copy or redirect "
-    "output into files; install packages; run builds, servers or any mutating/background command; "
-    "call tools that change state. Your only deliverable is the answer to what the user asked. If "
-    "the request needs an action that would change something (A/B/C), answer what you can with the "
-    "allowed read-only work, then END your reply with this sentence in Spanish, adapting only the "
-    "A/B/C list and keeping the rest verbatim: \"Estoy en modo Ask, solo puedo responder. Si "
-    "querés que proceda a A/B/C tenés que pedírmelo en modo Agent.\" Never claim or pretend to "
-    "have performed an action you did not perform. If you detect that you already changed "
-    "something by mistake, stop, say so plainly, and do not continue."
-)
+
+def _ask_note(app_locale: str = "") -> str:
+    lang = resolve_lang(app_locale)
+    closing = ask_closing_sentence(lang)
+    return (
+        "[mode:ask] STRICT ASK MODE — read-only turn. Allowed: reading files, "
+        "listing/searching the filesystem, and read-only inspection commands (e.g. cat, head, tail, "
+        "grep, find, wc, stat, diff, sha256sum, git status/log/diff/show, version checks) and "
+        "equivalent one-shot non-mutating commands. Forbidden — do NOT do any of these, even if asked: "
+        "create, edit, rename, move, delete or transform any file; write, patch, copy or redirect "
+        "output into files; install packages; run builds, servers or any mutating/background command; "
+        "call tools that change state. Your only deliverable is the answer to what the user asked. If "
+        "the request needs an action that would change something (A/B/C), answer what you can with the "
+        "allowed read-only work, then END your reply with this sentence VERBATIM — in this exact "
+        "language, adapting only the A/B/C list and keeping the rest word-for-word: \""
+        + closing
+        + "\" Never claim or pretend to have performed an action you did not perform. If you detect "
+        "that you already changed something by mistake, stop, say so plainly, and do not continue. "
+        + answer_language_clause(lang)
+    )
+
 
 PLAN_RULES = """For this turn, you are in PLAN MODE — planning only.
 
@@ -148,21 +171,82 @@ PLAN_CLOSE = (
     "the directive."
 )
 
-PLAN_NOTE = "[/plan — plan mode]\n\n" + PLAN_RULES + "\n\n" + PLAN_CRAFT + "\n\n" + PLAN_ASK + "\n\n" + PLAN_CLOSE
 
-DEBUG_NOTE = (
-    "[mode:debug] DEBUG LOOP mode is active for the user's bug. Phase 0 — INSTRUMENT NOW (before "
-    "anything else): add the debug logging/instrumentation the stack allows (a file log, console, "
-    "structured dumps) around the suspected area, and modify the project files as needed. Phase 1 — "
-    "INSTRUCT: reply with SHORT numbered steps for the user to reproduce the bug and capture "
-    "evidence, including WHERE the log lives. Then end your reply with ONLY this directive "
-    "paragraph on its own line and nothing else in that paragraph: ::debug-loop{round=\"1\"} — "
-    "round starts at 1 and increments on every iteration; that paragraph holds only the directive. "
-    "Loop contract: the card under the directive has two buttons. \"I already did the steps, it's "
-    "still not working\" sends you a new turn: read the produced logs, diagnose the root cause with "
-    "evidence, apply the fix, and reply with the next sequential steps + the next ::debug-loop "
-    "directive (round+1). \"Mark as fixed\" sends a cleanup turn: remove ALL the instrumentation "
-    "you added and restore the code to its clean state."
-)
+def _plan_note(app_locale: str = "") -> str:
+    lang = resolve_lang(app_locale)
+    return (
+        "[/plan — plan mode]\n\n"
+        + PLAN_RULES
+        + "\n\n"
+        + PLAN_CRAFT
+        + "\n\n"
+        + PLAN_ASK
+        + "\n\n"
+        + PLAN_CLOSE
+        + "\n\n"
+        + "Write the plan itself (the markdown file and your reply) in the user's response language. "
+        + answer_language_clause(lang)
+    )
 
-NOTES = {"ask": ASK_NOTE, "plan": PLAN_NOTE, "debug": DEBUG_NOTE}
+
+def _debug_note(app_locale: str = "") -> str:
+    lang = resolve_lang(app_locale)
+    return (
+        "[mode:debug] DEBUG LOOP mode is active for the user's bug. Phase 0 — INSTRUMENT NOW (before "
+        "anything else): add the debug logging/instrumentation the stack allows (a file log, console, "
+        "structured dumps) around the suspected area, and modify the project files as needed. Phase 1 — "
+        "INSTRUCT: reply with SHORT numbered steps for the user to reproduce the bug and capture "
+        "evidence, including WHERE the log lives. Then end your reply with ONLY this directive "
+        "paragraph on its own line and nothing else in that paragraph: ::debug-loop{round=\"1\"} — "
+        "round starts at 1 and increments on every iteration; that paragraph holds only the directive. "
+        "Loop contract: the card under the directive has two buttons. \"I already did the steps, it's "
+        "still not working\" sends you a new turn: read the produced logs, diagnose the root cause with "
+        "evidence, apply the fix, and reply with the next sequential steps + the next ::debug-loop "
+        "directive (round+1). \"Mark as fixed\" sends a cleanup turn: remove ALL the instrumentation "
+        "you added and restore the code to its clean state. "
+        + answer_language_clause(lang)
+    )
+
+
+class _NotesView:
+    """``NOTES`` keeps its dict-ish public shape (``get``/``__getitem__``/
+    ``__contains__``/``keys``/``set(NOTES)``) but resolves each note through
+    the i18n ladder at call time, so a locale change reaches the next turn
+    with no reload. Only the three framing modes exist; ``agent`` is None."""
+
+    _FACTORIES = {"ask": _ask_note, "plan": _plan_note, "debug": _debug_note}
+
+    def get(self, key: object, default: object = None, app_locale: str = "") -> object:
+        factory = self._FACTORIES.get(key)  # type: ignore[arg-type]
+        return factory(app_locale) if factory else default
+
+    def __getitem__(self, key: str) -> str:
+        factory = self._FACTORIES.get(key)
+        if factory is None:
+            raise KeyError(key)
+        return factory()
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._FACTORIES
+
+    def keys(self):  # noqa: ANN201
+        return self._FACTORIES.keys()
+
+    def __iter__(self):
+        return iter(self._FACTORIES)
+
+
+#: The catalogue, resolved per call: the language follows the i18n ladder;
+#: the protocol wording is always English.
+NOTES = _NotesView()
+
+_LEGACY_NOTE_NAMES = {"ASK_NOTE": "ask", "PLAN_NOTE": "plan", "DEBUG_NOTE": "debug"}
+
+
+def __getattr__(name: str) -> str:
+    """PEP 562 back-compat: ``ASK_NOTE``/``PLAN_NOTE``/``DEBUG_NOTE`` resolve
+    through the ladder at access time (callers used to import the constants)."""
+    mode = _LEGACY_NOTE_NAMES.get(name)
+    if mode is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return NOTES[mode]
