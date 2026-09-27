@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.1.0 — 2026-09-27
+
+**No hardcoded response language — the plugin answers in the language of the system.**
+
+Upstream shipped an Argentine-Spanish closing sentence in the ask note and Spanish
+UI strings across the desktop half, so on any machine the model drifted into Spanish
+and the cards spoke Spanish. This release localizes both channels:
+
+- **`i18n.py` (new)**: the response-language ladder — app locale →
+  `HERMES_COMPOSER_MODES_LANG` → OS locale (`LANGUAGE/LC_ALL/LC_MESSAGES/LANG`) →
+  **English**. Unknown languages degrade to English, never raise, never force a
+  specific language. Catalogue of every model-facing sentence (ask closing line,
+  answer-language clause, `/mode` replies) keyed by language — the only place those
+  sentences live.
+- **agent half**: mode notes became per-call factories (`modes.py`) so a locale
+  switch reaches the next turn with no reload; `ASK_NOTE`/`PLAN_NOTE`/`DEBUG_NOTE`
+  stay importable via PEP-562. Protocol tokens (`::plan-approve`, `::plan-questions`,
+  `::debug-loop`) are deliberately never translated — they are parsed by the desktop
+  half. The ask note now says *quote this sentence verbatim, in this language*
+  instead of carrying one literal Spanish line.
+- **state + API**: the store persists `locale` (`state.json`); `POST /locale` reports
+  the app language, and every `POST /mode` stage carries it. `GET /state` exposes it.
+- **desktop half (VER v13.1 → v14.0)**: all user-facing strings moved into the
+  `STR = {en, ru, es}` catalogue, registered through the SDK's plugin-i18n
+  (`ctx.i18n.register`) and resolved against the app's active display language —
+  components via `usePluginI18n(ID)`, handlers via `ctx.i18n.t`. The app locale is
+  read (`useI18n().locale`, hydrated from `navigator.language`) and reported to the
+  backend so the model-facing half follows the same language as the UI half. Both
+  i18n hooks are taken off the SDK namespace so pre-0.21.4 shells degrade to the
+  English bundle instead of failing plugin load.
+- **docs**: `docs/localization.md` — the two-channel contract (protocol wording is
+  always English; voice localizes), the ladder, the adding-a-language checklist,
+  the behavior matrix, and upstream-patch guidance.
+- **tests**: 103 → 131. New `tests/test_i18n.py` pins the ladder and the English
+  floor; ask-closing tests now assert per-language resolution instead of one
+  Spanish literal; store/API/register cover the locale routes. Smoke harness
+  asserts the `/mode` stage carries the locale.
+- **pinning the minimum task**: to force Russian regardless of the system, set
+  `HERMES_COMPOSER_MODES_LANG=ru` (or pick Русский in app Settings) — no string
+  patching needed, which is why the fork did not simply hardcode Russian.
+
 ## 2.0.1 — 2026-09-16
 
 **The mode note now reaches the turn — the stage targets the session id the core uses.**

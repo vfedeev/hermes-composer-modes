@@ -7,7 +7,7 @@
 Four composer modes, one keystroke each. The mode's operating note reaches the
 model, never your bubble, your transcript, or your session titles.
 
-`MIT` · `macOS / Linux / Windows` · `Plugin v2.0.1` · `Hermes >= 0.21.3`
+`MIT` · `macOS / Linux / Windows` · `Plugin v2.1.0` · `Hermes >= 0.21.3` · `en / ru / es`
 
 </div>
 
@@ -84,6 +84,18 @@ with `HERMES_COMPOSER_MODES_ASK_ENFORCE=0` in the Hermes process environment.
 * **Anywhere** — `/mode ask|agent|plan|debug` sets the default mode for sessions that
   have no mode of their own (CLI, TUI, desktop, messaging platforms).
 
+## Which language does it speak?
+
+This fork carries **no hardcoded response language** (upstream shipped a Spanish
+closing sentence and Spanish UI strings). Everything user-facing follows an
+ordered ladder — **the desktop app's display language → `HERMES_COMPOSER_MODES_LANG`
+→ the OS locale → English** — so the cards, the `/mode` replies and the model's
+own voice come out in the language of the system it runs on, and degrade to
+English when that language cannot be determined. Protocol tokens
+(`::plan-approve` and friends) stay English everywhere — they are parsed, not
+read. The full contract, the adding-a-language checklist and the behavior matrix
+live in [`docs/localization.md`](docs/localization.md).
+
 ## Requirements
 
 * Hermes Agent **>= 0.21.3** (the unified agent + desktop package layout and
@@ -127,14 +139,15 @@ End-to-end recipe (hidden note in `api_content`, ask-mode block, desktop-half pr
 plugin.yaml     agent-half manifest (name, hooks, platforms, requires_hermes)
 __init__.py     register(ctx): the two hooks, the /mode command, the shipped skill
 modes.py        mode ids, labels and the operating notes (single source of truth)
+i18n.py         the response-language ladder (app locale → env → OS → en)
 store.py        per-session mode state (file-backed, thread-safe, plugin-data/)
 enforce.py      the ask-mode policy gate (deny-list + terminal classifier)
 dashboard/      plugin_api.py — the REST namespace the desktop half talks to
 desktop/        plugin.js — mode button, plan card, plan reader pane, debug loop card
 skills/         the mode protocol as a loadable skill
 scripts/        verify_note.py + smoke_desktop_half.mjs (repository gates)
-tests/          pytest suite (103 tests)
-docs/           architecture, limits, verification
+tests/          pytest suite (131 tests)
+docs/           architecture, limits, verification, localization
 ```
 
 Run the tests with `python -m pytest -c tests/pytest.ini`. The pytest config lives in

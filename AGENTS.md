@@ -27,14 +27,17 @@ native tools like `node`, `python`, `git`.
 plugin.yaml       agent-half manifest (name, hooks, platforms, requires_hermes)
 __init__.py       register(ctx): pre_llm_call, pre_tool_call, /mode, shipped skill
 modes.py          mode ids + the operating notes (single source of truth)
+i18n.py           the response-language ladder (app locale → env → OS → en) —
+                  the ONLY place a user-facing sentence lives
 store.py          per-session mode state — plugin-data/composer-modes/state.json
 enforce.py        ask-mode policy gate (tool deny-list + terminal classifier)
 dashboard/        manifest.json + plugin_api.py → /api/plugins/composer-modes/
-desktop/plugin.js the desktop half (mode button, cards, plan reader pane)
+desktop/          plugin.js the desktop half (mode button, cards, plan reader pane)
+                  — all UI copy lives in the STR catalogue (en/ru/es) only
 skills/composer-modes/SKILL.md  the protocol, loadable as composer-modes:modes
 scripts/verify_note.py          read the hidden note back out of state.db
 tests/            pytest suite (config in tests/pytest.ini — rootdir on purpose)
-docs/             architecture.md, limits.md, verification.md
+docs/             architecture.md, limits.md, verification.md, localization.md
 ```
 
 ## 2. Install (the whole thing)
@@ -91,6 +94,12 @@ Report the real values — never paste a checklist you did not run.
 ## 5. Changing the code
 
 * One rule per change; keep `modes.py` the only place a mode's words live.
+* **Language rule** (docs/localization.md): user-facing text is never a literal
+  at a call site. Model-facing sentences live only in the `i18n.py` catalogue;
+  UI copy only in the `STR` bundles of `desktop/plugin.js`. Protocol tokens
+  (`::plan-approve`, `::plan-questions`, `::debug-loop`, `[mode:*]`,
+  `.hermes/plans/`) are English, untranslated, forever — the desktop parses
+  them. The fallback language is English, never another specific one.
 * After any change: `node --check desktop/plugin.js` + `node scripts/smoke_desktop_half.mjs` (if touched),
   `python -m pytest -c tests/pytest.ini`, `hermes plugins validate .`.
 * Bump `VERSION` in `__init__.py`, `dashboard/plugin_api.py`, `plugin.yaml`,
