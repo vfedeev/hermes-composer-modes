@@ -8,7 +8,7 @@ only a live turn proves. Run them in that order and report real output.
 ```bash
 node --check desktop/plugin.js            # the desktop half parses as plain ESM
 node scripts/smoke_desktop_half.mjs       # loads it with SDK stubs: wires + stages, never rewrites
-python -m pytest -c tests/pytest.ini      # 141 tests: modes, store, enforcement, wiring, API, i18n
+python -m pytest -c tests/pytest.ini      # 144 tests: modes, store, enforcement, wiring, API, i18n
 python scripts/lang_matrix.py             # the whole language ladder printed: ru/es/en + fallbacks
 hermes plugins validate .                 # manifest + capability probe against register()
 ```

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.1.1 — 2026-09-27
+
+**Plan cards work on remote backends (SSH / cloud).**
+
+The desktop half read plan and questions files with the Electron IPC
+`hermes:readFileText`, which reads the CLIENT's disk. On SSH connections the
+agent writes `.hermes/plans/…` on the SERVER, so every `::plan-questions` card
+and the plan-reader pane failed with `file does not exist` on the client
+machine.
+
+- **agent half**: read-only `GET /plan?path=…` — serves exactly one shape,
+  `<anything>/.hermes/plans/<plain-name>.md|json`: no `..`, no traversal, plain
+  filename segment only, 512 KB cap (`dashboard/plugin_api.py`).
+- **desktop half**: `readPlanText(abs)` is backend-first (`ctx.rest('/plan')`),
+  local IPC only as the fallback for old backends without the route — a pure
+  upgrade, nothing breaks when halves are mismatched in either direction.
+  Both consumers (plan-reader pane, questions card) go through it; three call
+  sites of raw `readFileText` collapse to one helper.
+- **new strings**: `qTooLarge`, `qMissing` in the en/ru/es bundles.
+- **tests**: 141 → 144 (route shape: ok / not-found / invalid-path / traversal /
+  size cap / `.json` questions files); smoke stubs the `/plan` route.
+
 ## 2.1.0 — 2026-09-27
 
 **No hardcoded response language — the plugin answers in the language of the system.**

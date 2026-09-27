@@ -1,5 +1,5 @@
 /**
- * composer-modes — Cursor-style mode selector for the Hermes composer. v14.0.
+ * composer-modes — Cursor-style mode selector for the Hermes composer. v14.1.
  *
  * v14 (fork): localization without hardcodes — every user-facing string lives in the
  *   `STR` catalogue (en/ru/es bundles) resolved against the APP's display language
@@ -9,6 +9,11 @@
  *   ladder (app locale → HERMES_COMPOSER_MODES_LANG → OS locale → en) localizes the
  *   model-facing sentences — notably the ask closing line, previously hardcoded
  *   Spanish. Protocol tokens stay English; see docs/localization.md.
+ *
+ * v14.1 (fork): plan files are read through the backend (`ctx.rest('/plan')`)
+ *   first and the local IPC (hermes:readFileText) only as a fallback — on
+ *   SSH/remote connections the plan lives on the server's disk and the client
+ *   reader could only fail with 'file does not exist'.
  *
  * Botón único de modos en la tira del composer (ask/agent/plan/debug). Un ComposerMiddleware
  * adjunta el FRAME del modo al draft (v12.0: `mode` + `note` como DATO, sin RPC): el shell manda
@@ -154,7 +159,7 @@ const usePluginI18n = SDK.usePluginI18n ?? (() => translateEn)
 const useI18n = SDK.useI18n ?? (() => ({ locale: translateEn.locale() }))
 
 const ID = 'composer-modes'
-const VER = 'v14.0'
+const VER = 'v14.1'
 const BOOT = Date.now().toString(36).slice(-4)
 
 /** v14: user-facing copy is localized (no hardcoded Spanish). The active

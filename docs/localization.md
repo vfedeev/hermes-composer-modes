@@ -121,6 +121,10 @@ Anti-checklist — **never**:
 | Headless server, no locale, `HERMES_COMPOSER_MODES_LANG=ru` | Russian (rung 2 wins OS) | n/a |
 | Everything unset / garbage | English | English |
 
+Card *contents* come from the backend disk (`GET /plan`), not the client's local
+files — a Russian/Spanish plan written on the server renders on a Windows client
+in SSH mode; only the chrome (titles, buttons) follows the app language.
+
 ## 6. Forcing Russian regardless of system (the "minimum task" option)
 
 You can still pin a language without patching strings — that's what rung 2 is
