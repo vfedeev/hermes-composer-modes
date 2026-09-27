@@ -208,6 +208,8 @@ const STR = {
     qReadErr: 'Could not read the questions.',
     qBinary: 'The questions file is binary.',
     qParseErr: 'No valid questions found in the file.',
+    qTooLarge: 'The plan file is too large.',
+    qMissing: 'The plan file was not found on the backend.',
     qInvalid: 'Invalid directive.',
     qReading: 'Reading the questions…',
     qContinue: 'Continue without answering',
@@ -272,6 +274,8 @@ const STR = {
     qReadErr: 'Не удалось прочитать вопросы.',
     qBinary: 'Файл вопросов бинарный.',
     qParseErr: 'В файле не найдено корректных вопросов.',
+    qTooLarge: 'Файл плана слишком большой.',
+    qMissing: 'Файл плана не найден на бэкенде.',
     qInvalid: 'Неверная директива.',
     qReading: 'Читаю вопросы…',
     qContinue: 'Продолжить без ответов',
@@ -336,6 +340,8 @@ const STR = {
     qReadErr: 'No se pudieron leer las preguntas.',
     qBinary: 'El archivo de preguntas es binario.',
     qParseErr: 'No pude leer preguntas válidas del archivo.',
+    qTooLarge: 'El archivo del plan es demasiado grande.',
+    qMissing: 'El archivo del plan no se encontró en el backend.',
     qInvalid: 'Directiva inválida.',
     qReading: 'Leyendo las preguntas…',
     qContinue: 'Continuar sin responder',
@@ -396,6 +402,32 @@ async function stageLocale(ctx, loc) {
   } catch (_) {
     return false
   }
+}
+
+/** v14.1: backend-first plan reader. On SSH/remote connections the plan the
+ *  agent just wrote lives on the BACKEND's disk, while window.hermesDesktop
+ *  .readFileText reads the CLIENT's — the file 'does not exist' there. ctx.rest
+ *  ('/plan') is answered by dashboard/plugin_api.py wherever the backend runs;
+ *  an old backend without the route throws, and we fall back to local IPC. */
+async function readPlanText(absPath) {
+  if (ctxRef && typeof ctxRef.rest === 'function') {
+    try {
+      const r = await ctxRef.rest('/plan?path=' + encodeURIComponent(absPath))
+      if (r && r.ok === true && typeof r.text === 'string') return r.text
+      if (r && r.error === 'too-large') throw new Error(T('qTooLarge'))
+      if (r && r.error === 'not-found') throw new Error(T('qMissing'))
+      /* anything else (unexpected shape): local IPC is the honest fallback */
+    } catch (e) {
+      const msg = String((e && e.message) || e)
+      if (msg === T('qTooLarge') || msg === T('qMissing')) throw e
+      /* route missing / network: fall through */
+    }
+  }
+  const read = typeof window !== 'undefined' && window.hermesDesktop ? window.hermesDesktop.readFileText : null
+  if (typeof read !== 'function') throw new Error(T('readerNoRead'))
+  const r = await read(absPath)
+  if (r && r.binary) throw new Error(T('readerBinary'))
+  return String((r && r.text) || '')
 }
 
 /** Sonda → desktop.log vía console.error (único nivel capturado). */
@@ -877,23 +909,12 @@ function PlanReaderPane() {
       planReaderView.set({ status: 'err', msg: T('readerNoWorkspace') })
       return undefined
     }
-    const read = typeof window !== 'undefined' && window.hermesDesktop ? window.hermesDesktop.readFileText : null
-    if (typeof read !== 'function') {
-      planReaderView.set({ status: 'err', msg: T('readerNoRead') })
-      return undefined
-    }
     let alive = true
     planReaderView.set({ status: 'loading' })
-    Promise.resolve(read(abs))
-      .then((r) => {
+    readPlanText(abs)
+      .then((text) => {
         if (!alive) return
-        if (r && r.binary) {
-          planReaderView.set({ status: 'err', msg: T('readerBinary') })
-          probe(`planview err file=${file} binary`)
-          return
-        }
-        const text = String((r && r.text) || '')
-        planReaderView.set({ status: 'ok', text, truncated: !!(r && r.truncated) })
+        planReaderView.set({ status: 'ok', text })
         probe(`planview ok file=${file} len=${text.length}`)
       })
       .catch((e) => {
@@ -1265,22 +1286,12 @@ export default {
           setQEntry(file, { status: 'err', msg: T('readerNoWorkspace') })
           return undefined
         }
-        const read = typeof window !== 'undefined' && window.hermesDesktop ? window.hermesDesktop.readFileText : null
-        if (typeof read !== 'function') {
-          setQEntry(file, { status: 'err', msg: T('readerNoRead') })
-          return undefined
-        }
         let alive = true
         setQEntry(file, { status: 'loading' })
-        Promise.resolve(read(abs))
-          .then((r) => {
+        readPlanText(abs)
+          .then((text) => {
             if (!alive) return
-            if (r && r.binary) {
-              setQEntry(file, { status: 'err', msg: T('qBinary') })
-              probe(`pq load err file=${file} binary`)
-              return
-            }
-            const list = normalizeQuestions(r ? r.text : '')
+            const list = normalizeQuestions(text)
             if (!list || !list.length) {
               setQEntry(file, { status: 'err', msg: T('qParseErr') })
               probe(`pq load err file=${file} parse`)

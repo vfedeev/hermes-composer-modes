@@ -132,7 +132,13 @@ const ctx = {
     set(key, value) { this._v.set(key, value) },
     remove(key) { this._v.delete(key) }
   },
-  rest: async (url, opts) => { stages.push({ url, opts }); return { ok: true } },
+  rest: async (url, opts) => {
+    stages.push({ url, opts })
+    if (String(url).startsWith('/plan')) {
+      return { ok: true, text: '{"title":"t","questions":[{"q":"?","options":["a"]}]}' }
+    }
+    return { ok: true }
+  },
   onDispose: (fn) => disposers.push(fn),
   i18n: { register: () => {}, t: (key, ...args) => String(key) },
   register: (c) => { contributions.push(c); return () => {} },
